@@ -4,18 +4,29 @@ import pickle
 import numpy as np
 import pandas as pd
 
-
 # ----------------------------
 # Page Config
 # ----------------------------
-st.set_page_config(page_title="Disease Prediction System", page_icon="🩺", layout="centered")
-
+st.set_page_config(page_title="Disease Prediction System", page_icon="🩺")
 
 # ----------------------------
-# Load Files Safely
+# File Paths
 # ----------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+USERS_FILE = os.path.join(BASE_DIR, "users.csv")
+HISTORY_FILE = os.path.join(BASE_DIR, "history.csv")
+
+# Create files if not exist
+if not os.path.exists(USERS_FILE):
+    pd.DataFrame(columns=["name", "password", "age", "email"]).to_csv(USERS_FILE, index=False)
+
+if not os.path.exists(HISTORY_FILE):
+    pd.DataFrame(columns=["name", "disease", "symptoms"]).to_csv(HISTORY_FILE, index=False)
+
+# ----------------------------
+# Load ML Files
+# ----------------------------
 with open(os.path.join(BASE_DIR, "disease_model.pkl"), "rb") as f:
     model = pickle.load(f)
 
@@ -25,105 +36,127 @@ with open(os.path.join(BASE_DIR, "label_encoder.pkl"), "rb") as f:
 with open(os.path.join(BASE_DIR, "feature_columns.pkl"), "rb") as f:
     feature_columns = pickle.load(f)
 
-csv_path = os.path.join(BASE_DIR, "disease_prediction_dataset_10000_rows_23_columns.csv")
-df = pd.read_csv(csv_path)
-
+df = pd.read_csv(os.path.join(BASE_DIR, "disease_prediction_dataset_10000_rows_23_columns.csv"))
 
 # ----------------------------
-# Session State
+# Session
 # ----------------------------
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
+# ----------------------------
+# MAIN TITLE
+# ----------------------------
+st.title("🩺 DISEASE PREDICTION SYSTEM")
 
 # ----------------------------
-# Sidebar Navigation
+# AUTH PAGES
 # ----------------------------
-st.sidebar.title("🧭 Navigation")
+if not st.session_state.logged_in:
 
-if st.session_state.logged_in:
-    page = st.sidebar.radio("Go to", ["Prediction", "Logout"])
+    choice = st.radio("Select Option", ["Login", "Sign Up"])
+
+    users_df = pd.read_csv(USERS_FILE)
+
+    # -------- SIGN UP --------
+    if choice == "Sign Up":
+        st.subheader("Create Account")
+
+        name = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        age = st.number_input("Age", 1, 120)
+        email = st.text_input("Email")
+
+        if st.button("Sign Up"):
+            if name in users_df["name"].values:
+                st.error("User already exists!")
+            else:
+                new_user = pd.DataFrame([[name, password, age, email]],
+                                        columns=["name", "password", "age", "email"])
+                new_user.to_csv(USERS_FILE, mode="a", header=False, index=False)
+                st.success("Account created! Please login.")
+
+    # -------- LOGIN --------
+    elif choice == "Login":
+        st.subheader("Login")
+
+        name = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+
+        if st.button("Login"):
+            user = users_df[(users_df["name"] == name) & (users_df["password"] == password)]
+
+            if not user.empty:
+                st.session_state.logged_in = True
+                st.session_state.user_name = name
+                st.success("Login Successful ✅")
+                st.rerun()
+            else:
+                st.error("Invalid credentials ❌")
+
+# ----------------------------
+# MAIN APP
+# ----------------------------
 else:
-    page = "Login"
+    st.sidebar.title("Navigation")
+    page = st.sidebar.radio("Go to", ["Prediction", "History", "Logout"])
 
+    # -------- PREDICTION --------
+    if page == "Prediction":
+        st.subheader(f"Welcome {st.session_state.user_name} 👋")
 
-# ----------------------------
-# LOGIN PAGE
-# ----------------------------
-if page == "Login":
+        selected_symptoms = st.multiselect("Select Symptoms", feature_columns)
 
-    st.title("🩺 Disease Prediction System")
-    st.subheader("User Login")
+        if st.button("Predict"):
+            if selected_symptoms:
 
-    name = st.text_input("Enter Your Name")
-    email = st.text_input("Enter Your Email")
-    age = st.number_input("Enter Your Age", min_value=1, max_value=120)
+                input_data = np.zeros(len(feature_columns))
+                for symptom in selected_symptoms:
+                    input_data[feature_columns.index(symptom)] = 1
 
-    if st.button("Login"):
-        if name and email and age:
-            st.session_state.logged_in = True
-            st.session_state.user_name = name
-            st.success("Login Successful ✅")
-            st.rerun()
+                prediction = model.predict([input_data])
+                disease = le.inverse_transform(prediction)[0]
+
+                st.success(f"Predicted Disease: {disease}")
+
+                # Save history
+                history = pd.DataFrame([[
+                    st.session_state.user_name,
+                    disease,
+                    ", ".join(selected_symptoms)
+                ]], columns=["name", "disease", "symptoms"])
+
+                history.to_csv(HISTORY_FILE, mode="a", header=False, index=False)
+
+                # Show precautions
+                precautions = df[df["Disease"] == disease][[
+                    "Precaution_1",
+                    "Precaution_2",
+                    "Precaution_3",
+                    "Precaution_4"
+                ]].iloc[0]
+
+                st.subheader("Precautions")
+                for p in precautions:
+                    st.write("•", p)
+
+            else:
+                st.warning("Select symptoms")
+
+    # -------- HISTORY --------
+    elif page == "History":
+        st.subheader("Your Prediction History")
+
+        history_df = pd.read_csv(HISTORY_FILE)
+        user_history = history_df[history_df["name"] == st.session_state.user_name]
+
+        if not user_history.empty:
+            st.dataframe(user_history)
         else:
-            st.error("Please fill all details")
+            st.info("No history found")
 
-
-# ----------------------------
-# PREDICTION PAGE
-# ----------------------------
-elif page == "Prediction":
-
-    st.title("🧬 Disease Prediction")
-    st.write(f"Welcome, {st.session_state.user_name} 👋")
-
-    st.markdown("### Select Your Symptoms")
-
-    selected_symptoms = st.multiselect(
-        "Choose Symptoms",
-        feature_columns
-    )
-
-    if st.button("Predict Disease"):
-
-        if selected_symptoms:
-
-            input_data = np.zeros(len(feature_columns))
-
-            for symptom in selected_symptoms:
-                index = feature_columns.index(symptom)
-                input_data[index] = 1
-
-            input_data = input_data.reshape(1, -1)
-
-            prediction = model.predict(input_data)
-            disease = le.inverse_transform(prediction)[0]
-
-            st.success(f"🩺 Predicted Disease: {disease}")
-
-            precautions = df[df["Disease"] == disease][[
-                "Precaution_1",
-                "Precaution_2",
-                "Precaution_3",
-                "Precaution_4"
-            ]].iloc[0]
-
-            st.markdown("### 🛡️ Recommended Precautions")
-
-            for p in precautions:
-                st.write("•", p)
-
-            st.info("⚠️ This is a prediction system. Please consult a doctor for medical advice.")
-
-        else:
-            st.warning("Please select at least one symptom.")
-
-
-# ----------------------------
-# LOGOUT
-# ----------------------------
-elif page == "Logout":
-
-    st.session_state.logged_in = False
-    st.success("Logged out successfully.")
-    st.rerun()
+    # -------- LOGOUT --------
+    elif page == "Logout":
+        st.session_state.logged_in = False
+        st.success("Logged out successfully")
+        st.rerun()
